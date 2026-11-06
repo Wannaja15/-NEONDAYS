@@ -17,29 +17,43 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: barichello/godot-ci:4.4.1
+      image: barichello/godot-ci:4.3.0
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check project files
+      - name: Extract NEON DAYS project
         run: |
-          test -f project.godot
-          echo "Godot project found."
+          test -f NEON_DAYS_v0.3_camera_pov.zip
+          mkdir -p source
+          unzip -q NEON_DAYS_v0.3_camera_pov.zip -d source
+
+      - name: Locate Godot project
+        run: |
+          PROJECT_FILE=$(find source -name project.godot -print -quit)
+          test -n "$PROJECT_FILE"
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Found project: $PROJECT_DIR"
+
+      - name: Check Android export preset
+        run: |
+          if [ ! -f "$PROJECT_DIR/export_presets.cfg" ]; then
+            echo "::error::Android export preset is missing. Add export_presets.cfg from Godot Editor."
+            exit 1
+          fi
 
       - name: Import project
         run: |
-          godot --headless --editor --path . --quit
+          godot --headless --editor --path "$PROJECT_DIR" --quit
 
-      - name: Create build directory
-        run: mkdir -p build
-
-      - name: Export Android APK
+      - name: Build Android APK
         run: |
-          godot --headless --path . \
+          mkdir -p build
+          godot --headless --path "$PROJECT_DIR" \
             --export-debug "Android" \
-            build/NEON_DAYS.apk
+            "$GITHUB_WORKSPACE/build/NEON_DAYS.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
