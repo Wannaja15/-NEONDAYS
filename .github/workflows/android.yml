@@ -21,34 +21,26 @@ jobs:
       GODOT_VERSION: "4.3"
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
-      ANDROID_NDK_VERSION: "23.2.8568313"
 
     steps:
-      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Install Java 17
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # 3. Install Linux dependencies
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            wget \
-            unzip \
-            zip \
-            curl \
-            ca-certificates
+          sudo apt-get install -y wget unzip zip curl ca-certificates
 
-      # 4. Install Android command-line tools
       - name: Install Android Command Line Tools
         run: |
+          set -e
+
           mkdir -p "$ANDROID_HOME/cmdline-tools"
 
           wget -q \
@@ -56,28 +48,34 @@ jobs:
             -O /tmp/android-tools.zip
 
           mkdir -p /tmp/android-tools
-
-          unzip -q /tmp/android-tools.zip \
-            -d /tmp/android-tools
+          unzip -q /tmp/android-tools.zip -d /tmp/android-tools
 
           mv /tmp/android-tools/cmdline-tools \
             "$ANDROID_HOME/cmdline-tools/latest"
 
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager executable not found."
+            exit 1
+          fi
+
+          "$SDKMANAGER" --version
+
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          sdkmanager --version
-
-      # 5. Install Android SDK, Build Tools and NDK
       - name: Install Android SDK packages
         run: |
           set -e
 
-          yes | sdkmanager \
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          yes | "$SDKMANAGER" \
             --sdk_root="$ANDROID_HOME" \
             --licenses
 
-          sdkmanager \
+          "$SDKMANAGER" \
             --sdk_root="$ANDROID_HOME" \
             --install \
             "platform-tools" \
@@ -92,17 +90,14 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/23.2.8568313" >> "$GITHUB_ENV"
           echo "GODOT_ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/23.2.8568313" >> "$GITHUB_ENV"
 
-      # 6. Install Godot 4.3
-      - name: Install Godot
+      - name: Install Godot 4.3
         run: |
           wget -q \
             https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip \
             -O /tmp/godot.zip
 
           mkdir -p /tmp/godot
-
-          unzip -q /tmp/godot.zip \
-            -d /tmp/godot
+          unzip -q /tmp/godot.zip -d /tmp/godot
 
           sudo install \
             /tmp/godot/Godot_v4.3-stable_linux.x86_64 \
@@ -110,7 +105,6 @@ jobs:
 
           godot --version
 
-      # 7. Install matching Godot export templates
       - name: Install Godot Export Templates
         run: |
           wget -q \
@@ -118,23 +112,16 @@ jobs:
             -O /tmp/godot-templates.tpz
 
           mkdir -p /tmp/godot-templates
-
-          unzip -q /tmp/godot-templates.tpz \
-            -d /tmp/godot-templates
+          unzip -q /tmp/godot-templates.tpz -d /tmp/godot-templates
 
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
-
           mkdir -p "$TEMPLATE_DIR"
 
-          cp -a /tmp/godot-templates/templates/. \
-            "$TEMPLATE_DIR/"
+          cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
 
           test -f "$TEMPLATE_DIR/android_debug.apk"
 
-          echo "Godot Android templates installed."
-
-      # 8. Locate project ZIP
-      - name: Locate NEON DAYS ZIP
+      - name: Locate NEON DAYS project
         run: |
           PROJECT_ZIP=""
 
@@ -149,33 +136,20 @@ jobs:
           done
 
           if [ -z "$PROJECT_ZIP" ]; then
-            PROJECT_ZIP=$(find . \
-              -maxdepth 1 \
-              -type f \
-              -name '*.zip' \
-              | head -n 1)
-          fi
-
-          if [ -z "$PROJECT_ZIP" ]; then
-            echo "::error::NEON DAYS ZIP not found."
+            echo "::error::Project ZIP not found."
             exit 1
           fi
 
           echo "PROJECT_ZIP=$PROJECT_ZIP" >> "$GITHUB_ENV"
 
-          echo "Project archive found: $PROJECT_ZIP"
-
-      # 9. Extract project
       - name: Extract NEON DAYS project
         run: |
           mkdir -p "$GITHUB_WORKSPACE/source"
 
-          unzip -q "$PROJECT_ZIP" \
-            -d "$GITHUB_WORKSPACE/source"
+          unzip -q "$PROJECT_ZIP" -d "$GITHUB_WORKSPACE/source"
 
           PROJECT_FILE=$(find "$GITHUB_WORKSPACE/source" \
-            -name project.godot \
-            -print -quit)
+            -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
             echo "::error::project.godot not found."
@@ -183,78 +157,48 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Godot project: $PROJECT_DIR"
-
-      # 10. Validate project files
-      - name: Validate project structure
+      - name: Validate project
         run: |
           set -e
 
           test -f "$PROJECT_DIR/project.godot"
           test -f "$PROJECT_DIR/export_presets.cfg"
 
-          echo "Project configuration found."
+          grep -q 'name="Android"' "$PROJECT_DIR/export_presets.cfg"
+          grep -q 'platform="Android"' "$PROJECT_DIR/export_presets.cfg"
 
-      # 11. Validate Android export preset
-      - name: Validate Android preset
-        run: |
-          set -e
+          echo "Project and Android preset found."
 
-          grep -q 'name="Android"' \
-            "$PROJECT_DIR/export_presets.cfg"
-
-          grep -q 'platform="Android"' \
-            "$PROJECT_DIR/export_presets.cfg"
-
-          grep -q 'package/unique_name=' \
-            "$PROJECT_DIR/export_presets.cfg"
-
-          echo "Android export preset validated."
-
-      # 12. Import project resources
       - name: Import Godot project
         run: |
-          godot \
-            --headless \
+          godot --headless \
             --editor \
             --path "$PROJECT_DIR" \
             --quit
 
-      # 13. Test project startup
       - name: Test project startup
         run: |
-          godot \
-            --headless \
+          godot --headless \
             --path "$PROJECT_DIR" \
             --quit-after 5
 
-      # 14. Export APK
       - name: Export NEON DAYS APK
         run: |
           mkdir -p "$GITHUB_WORKSPACE/build"
 
-          godot \
-            --headless \
+          godot --headless \
             --path "$PROJECT_DIR" \
             --export-debug "Android" \
             "$GITHUB_WORKSPACE/build/NEON_DAYS.apk"
 
           test -s "$GITHUB_WORKSPACE/build/NEON_DAYS.apk"
 
-          echo "APK export completed."
-
-      # 15. Verify APK archive
       - name: Verify APK
         run: |
-          unzip -t \
-            "$GITHUB_WORKSPACE/build/NEON_DAYS.apk"
+          unzip -t "$GITHUB_WORKSPACE/build/NEON_DAYS.apk"
 
-          echo "APK integrity check passed."
-
-      # 16. Upload APK
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
